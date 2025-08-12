@@ -1,0 +1,93 @@
+# Load required libraries
+library(data.table)    # fast data reading (like pandas)
+library(fastDummies)   # one-hot encoding
+library(caTools)       # train/test split with stratify
+library(smotefamily)   # SMOTE
+library(rpart)         # decision tree
+library(caret)         # evaluation metrics
+
+# Step 1: Read CSV
+df <- fread("C:/Users/Asma/Desktop/b2b_data4_updated.csv")
+
+# Step 2: One-hot encode 'COUNTRY' and 'INDUSTRY' (no drop_first)
+df <- fastDummies::dummy_cols(df, select_columns = c("COUNTRY", "INDUSTRY"),
+                              remove_first_dummy = FALSE, remove_selected_columns = TRUE)
+
+# Step 3: Map PLAN and SEGMENT to integers (ordinal)
+df$PLAN <- as.integer(factor(df$PLAN, levels = c("Pro", "Growth", "Enterprise"), ordered = TRUE))
+df$SEGMENT <- as.integer(factor(df$SEGMENT, levels = c("SMB", "Mid-Market", "Enterprise"), ordered = TRUE))
+
+# Step 4: Drop unnecessary columns
+drop_cols <- c("CUSTOMER_ID", "CUSTOMER_STATUS", "PREDICTED_CHURN", "CHURN_PROBABILITY")
+df[, (drop_cols) := NULL]
+
+# Step 5: Separate features and target
+X <- df[, !"CHURN_LABEL", with=FALSE]
+y <- as.factor(df$CHURN_LABEL)
+
+# Step 6: Train/test split with stratification (70/30)
+set.seed(42)
+split <- sample.split(y, SplitRatio = 0.7)
+X_train <- X[split == TRUE, ]
+X_test <- X[split == FALSE, ]
+y_train <- y[split == TRUE]
+y_test <- y[split == FALSE]
+
+# Step 7: Apply SMOTE on training data only
+library(smotefamily)
+
+# Convert y_trainDT to numeric vector (required by smotefamily)
+y_trainDT_vec <- as.numeric(as.character(y_train))
+
+# Apply SMOTE on training features and labels
+smote_output <- SMOTE(data.frame(X_train), y_trainDT_vec, K = 5, dup_size = 2)
+
+# Get balanced data
+X_trainDT_balanced <- smote_output$data[, -ncol(smote_output$data)]
+y_trainDT_balanced <- as.factor(smote_output$data[, ncol(smote_output$data)])
+
+# Combine balanced data into one data.frame
+train_balanced_data <- data.frame(X_trainDT_balanced, CHURN_LABEL = y_trainDT_balanced)
+
+
+
+dt_model <- rpart(CHURN_LABEL ~ ., data = train_balanced_data,
+                  method = "class",
+                  control = rpart.control(cp = 0,    # no pruning
+                                          minsplit = 2,  # split early
+                                          maxdepth = 30))  # or higher if needed
+
+
+# Step 9: Predict on test set
+X_test_df <- data.frame(lapply(X_test, as.numeric))  # make sure test set is numeric data.frame
+pred_classes <- predict(dt_model, newdata = X_test_df, type = "class")
+pred_probs <- predict(dt_model, newdata = X_test_df, type = "prob")[, "1"]
+
+# Step 10: Evaluate model
+y_test <- factor(y_test, levels = levels(y_trainDT_balanced))
+conf_mat <- confusionMatrix(pred_classes, y_test, positive = "1")
+print(conf_mat)
+
+# Extract metrics
+accuracy  <- conf_mat$overall["Accuracy"]
+precision <- conf_mat$byClass["Precision"]
+recall    <- conf_mat$byClass["Recall"]
+f1        <- conf_mat$byClass["F1"]
+
+cat("Decision Tree Performance Metrics\n")
+cat(sprintf("Accuracy:  %.4f\n", accuracy))
+cat(sprintf("Precision: %.4f\n", precision))
+cat(sprintf("Recall:    %.4f\n", recall))
+cat(sprintf("F1 Score:  %.4f\n\n", f1))
+
+# Step 11: Show sample predictions & probabilities
+sample_output <- data.frame(
+  Actual = y_test[1:10],
+  Predicted = pred_classes[1:10],
+  Churn_Probability = round(pred_probs[1:10], 4)
+)
+print(sample_output)
+
+# Step 12: Tree depth and leaves info (approximate)
+cat(sprintf("Tree depth (maxlevel): %d\n", max(dt_model$frame$var != "<leaf>")))
+cat(sprintf("Number of leaves: %d\n", sum(dt_model$frame$var == "<leaf>")))
