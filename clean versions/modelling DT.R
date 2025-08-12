@@ -1,0 +1,102 @@
+# Apply one-hot encoding to 'COUNTRY' and 'INDUSTRY' in b2b_data4_updated
+b2b_data4_updated <- fastDummies::dummy_cols(
+  b2b_data4_updated,
+  select_columns = c("COUNTRY", "INDUSTRY"),
+  remove_first_dummy = FALSE,
+  remove_selected_columns = FALSE
+)
+
+# Ordinal encoding of PLAN and SEGMENT in b2b_data4_updated
+b2b_data4_updated$PLAN <- as.integer(factor(b2b_data4_updated$PLAN, 
+                                            levels = c("Pro", "Growth", "Enterprise"), 
+                                            ordered = TRUE))
+
+b2b_data4_updated$SEGMENT <- as.integer(factor(b2b_data4_updated$SEGMENT, 
+                                               levels = c("SMB", "Mid-Market", "Enterprise"), 
+                                               ordered = TRUE))
+
+#remove unecessary columns from train and test
+b2b_data4_updated <- b2b_data4_updated[, !(names(b2b_data4_updated) %in% c("CUSTOMER_ID", "CUSTOMER_STATUS", "PREDICTED_CHURN","CHURN_PROBABILITY",'COUNTRY',"INDUSTRY"))]
+
+
+# Convert CHURN_LABEL to factor
+b2b_data4_updated$CHURN_LABEL <- as.factor(b2b_data4_updated$CHURN_LABEL)
+
+library(caTools)
+
+# Step 2: Split (70% train, 30% test) while preserving class ratio
+set.seed(42)
+split <- sample.split(b2b_data4_updated$CHURN_LABEL, SplitRatio = 0.7)
+
+# Step 3: Create train and test sets
+train_dataDT <- subset(b2b_data4_updated, split == TRUE)
+test_dataDT  <- subset(b2b_data4_updated, split == FALSE)
+
+print(prop.table(table(b2b_data4_updated$CHURN_LABEL)))
+print(prop.table(table(train_dataDT$CHURN_LABEL)))
+print(prop.table(table(test_dataDT$CHURN_LABEL)))
+
+# Step 4: Separate features and labels
+X_trainDT <- subset(train_dataDT, select = -CHURN_LABEL)
+y_trainDT <- train_dataDT$CHURN_LABEL
+
+X_testDT  <- subset(test_dataDT, select = -CHURN_LABEL)
+y_testDT  <- test_dataDT$CHURN_LABEL
+
+
+library(smotefamily)
+
+# Convert y_trainDT to numeric vector (required by smotefamily)
+y_trainDT_vec <- as.numeric(as.character(y_trainDT))
+
+# Apply SMOTE (NOTE: convert X_trainDT to data.frame, NOT matrix)
+smote_output <- SMOTE(data.frame(X_trainDT), y_trainDT_vec, K = 5, dup_size = 2)
+
+# Combine SMOTE result
+X_trainDT_balanced <- smote_output$data[, -ncol(smote_output$data)]
+y_trainDT_balanced <- smote_output$data[,  ncol(smote_output$data)]
+
+# Optional: Convert y_trainDT_balanced back to factor
+y_trainDT_balanced <- as.factor(y_trainDT_balanced)
+
+prop.table(table(y_trainDT_balanced))
+table(y_trainDT_balanced)
+
+
+# train decision tree model
+install.packages(c("rpart", "caret", "e1071"))  # caret depends on e1071 for confusionMatrix
+library(rpart)
+library(caret)
+
+# Combine balanced training data
+train_balanced_data <- data.frame(X_trainDT_balanced, CHURN_LABEL = y_trainDT_balanced)
+library(rpart)
+# Train decision tree model
+dt_model <- rpart(CHURN_LABEL ~ ., data = train_balanced_data, method = "class", control = rpart.control(cp = 0.01, minsplit = 10, maxdepth = 15))
+
+# Ensure test data is numeric data frame
+X_testDT <- data.frame(lapply(X_testDT, as.numeric))
+
+# Predict classes and class probabilities
+pred_classes <- predict(dt_model, newdata = X_testDT, type = "class")
+pred_probs <- predict(dt_model, newdata = X_testDT, type = "prob")[, "1"]  # Probability for class '1'
+
+# Convert true labels to factor with same levels
+y_testDT <- factor(y_testDT, levels = levels(y_trainDT_balanced))
+
+# Confusion matrix and stats using caret
+library(caret)
+conf_mat <- confusionMatrix(pred_classes, y_testDT, positive = "1")
+print(conf_mat)
+
+# Extract metrics
+accuracy  <- conf_mat$overall["Accuracy"]
+precision <- conf_mat$byClass["Precision"]
+recall    <- conf_mat$byClass["Recall"]
+f1        <- conf_mat$byClass["F1"]
+
+cat(sprintf("Decision Tree Performance Metrics\n"))
+cat(sprintf("Accuracy:  %.4f\n", accuracy))
+cat(sprintf("Precision: %.4f\n", precision))
+cat(sprintf("Recall:    %.4f\n", recall))
+cat(sprintf("F1 Score:  %.4f\n\n", f1))
