@@ -1,0 +1,638 @@
+# Apply one-hot encoding to 'COUNTRY' and 'INDUSTRY' in b2b_data4_updated
+b2b_data4_updated <- fastDummies::dummy_cols(
+  b2b_data4_updated,
+  select_columns = c("COUNTRY", "INDUSTRY"),
+  remove_first_dummy = FALSE,
+  remove_selected_columns = FALSE
+)
+
+# Ordinal encoding of PLAN and SEGMENT in b2b_data4_updated
+b2b_data4_updated$PLAN <- as.integer(factor(b2b_data4_updated$PLAN, 
+                                            levels = c("Pro", "Growth", "Enterprise"), 
+                                            ordered = TRUE))
+
+b2b_data4_updated$SEGMENT <- as.integer(factor(b2b_data4_updated$SEGMENT, 
+                                               levels = c("SMB", "Mid-Market", "Enterprise"), 
+                                               ordered = TRUE))
+
+#remove unecessary columns from train and test
+b2b_data4_updated <- b2b_data4_updated[, !(names(b2b_data4_updated) %in% c("CUSTOMER_ID", "CUSTOMER_STATUS", "PREDICTED_CHURN","CHURN_PROBABILITY",'COUNTRY',"INDUSTRY"))]
+
+
+# Convert CHURN_LABEL to factor
+b2b_data4_updated$CHURN_LABEL <- as.factor(b2b_data4_updated$CHURN_LABEL)
+
+library(caTools)
+
+# Step 2: Split (70% train, 30% test) while preserving class ratio
+set.seed(42)
+split <- sample.split(b2b_data4_updated$CHURN_LABEL, SplitRatio = 0.7)
+
+# Step 3: Create train and test sets
+train_dataRF <- subset(b2b_data4_updated, split == TRUE)
+test_dataRF  <- subset(b2b_data4_updated, split == FALSE)
+
+print(prop.table(table(b2b_data4_updated$CHURN_LABEL)))
+print(prop.table(table(train_dataRF$CHURN_LABEL)))
+print(prop.table(table(test_dataRF$CHURN_LABEL)))
+
+# Step 4: Separate features and labels
+X_trainRF <- subset(train_dataRF, select = -CHURN_LABEL)
+y_trainRF<- train_dataRF$CHURN_LABEL
+
+X_testRF  <- subset(test_dataRF, select = -CHURN_LABEL)
+y_testRF  <- test_dataRF$CHURN_LABEL
+
+
+library(smotefamily)
+
+# Convert y_trainRF to numeric vector (required by smotefamily)
+y_trainRF_vec <- as.numeric(as.character(y_trainRF))
+
+# Apply SMOTE (NOTE: convert X_trainRF to data.frame, NOT matrix)
+smote_output <- SMOTE(data.frame(X_trainRF), y_trainRF_vec, K = 5, dup_size = 2)
+
+# Combine SMOTE result
+X_trainRF_balanced <- smote_output$data[, -ncol(smote_output$data)]
+y_trainRF_balanced <- smote_output$data[,  ncol(smote_output$data)]
+
+# Optional: Convert y_trainRF_balanced back to factor
+y_trainRF_balanced <- as.factor(y_trainRF_balanced)
+
+prop.table(table(y_trainRF_balanced))
+table(y_trainRF_balanced)
+
+# Clean column names: replace spaces and slashes with ".", then remove consecutive dots
+clean_colnames <- function(df) {
+  colnames(df) <- gsub("[ /]", ".", colnames(df))     # Replace space or slash with dot
+  colnames(df) <- gsub("\\.+", ".", colnames(df))     # Replace multiple dots with a single dot
+  return(df)
+}
+
+
+
+# Step 1: Combine the SMOTE-balanced training data
+train_rf_data <- data.frame(X_trainRF_balanced)
+train_rf_data$CHURN_LABEL <- as.factor(y_trainRF_balanced)
+
+# Apply to all 3 datasets
+train_rf_data <- clean_colnames(train_rf_data)
+X_trainRF_balanced <- clean_colnames(X_trainRF_balanced)
+X_testRF <- clean_colnames(X_testRF)
+
+# Check if columns now match
+setdiff(colnames(X_trainRF_balanced), colnames(X_testRF))  # should return character(0)
+setdiff(colnames(X_testRF), colnames(X_trainRF_balanced))  # should return character(0)
+
+# Step 2: Load randomForest package
+library(randomForest)
+
+# Step 3: Train the Random Forest model
+set.seed(42)
+rf_model <- randomForest(CHURN_LABEL ~ ., 
+                         data = train_rf_data, 
+                         ntree = 500,                       # Number of trees
+                         mtry = floor(sqrt(ncol(X_trainRF_balanced))), # Features per split
+                         importance = TRUE,                 # Get variable importance
+                         na.action = na.omit)               # Handle NAs
+
+
+
+# Step 4: Evaluate model on test data
+rf_predictions <- predict(rf_model, newdata = X_testRF)
+
+# Step 5: Confusion matrix and accuracy
+library(caret)
+conf_matrix <- table(Predicted = rf_predictions, Actual = y_testRF)
+print(conf_matrix)
+
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+cat("Accuracy:", round(accuracy, 4), "\n")
+
+# Step 6: Variable importance plot
+varImpPlot(rf_model)
+
+
+worst to best models1
+rf_model_worst1 <- randomForest(CHURN_LABEL ~ ., 
+                                data = train_rf_data, 
+                                ntree = 20,                   # Very few trees
+                                mtry = 1,                    # Only one feature considered per split (too restrictive)
+                                importance = FALSE,           # No importance tracking
+                                na.action = na.omit)
+
+# --- Predictions ---
+rf_predictions1 <- predict(rf_model_worst1, newdata = X_testRF)
+rf_probabilities1 <- predict(rf_model_worst1, newdata = X_testRF, type = "prob")[, "1"]
+
+# --- Confusion Matrix with Full Stats ---
+library(caret)
+cm1 <- confusionMatrix(rf_predictions1, y_testRF, positive = "1")  
+print(cm1)
+
+# --- Extract and Print Evaluation Metrics ---
+kappa1 <- cm1$overall['Kappa']
+precision1 <- cm1$byClass['Pos Pred Value']
+recall1 <- cm1$byClass['Sensitivity']
+f1_score1 <- 2 * (precision1 * recall1) / (precision1 + recall1)
+
+cat("\n--- Evaluation Metrics (rf_model_worst1) ---\n")
+cat("Precision: ", round(precision1, 4), "\n")
+cat("Recall (Sensitivity): ", round(recall1, 4), "\n")
+cat("F1 Score: ", round(f1_score1, 4), "\n")
+cat("Kappa: ", round(kappa1, 4), "\n")
+
+# --- Show a sample of predictions and probabilities ---
+cat("\n--- Sample Predictions and Probabilities ---\n")
+sample_output1 <- data.frame(
+  Actual = y_testRF[1:10],
+  Predicted = rf_predictions1[1:10],
+  Probability = round(rf_probabilities1[1:10], 4)
+)
+print(sample_output1)
+
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    0    1
+         0 1972  432
+         1  137  459
+                                          
+               Accuracy : 0.8103          
+                 95% CI : (0.7958, 0.8242)
+    No Information Rate : 0.703           
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.4978          
+                                          
+ Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+            Sensitivity : 0.5152          
+            Specificity : 0.9350          
+         Pos Pred Value : 0.7701          
+         Neg Pred Value : 0.8203          
+             Prevalence : 0.2970          
+         Detection Rate : 0.1530          
+   Detection Prevalence : 0.1987          
+      Balanced Accuracy : 0.7251          
+                                          
+       'Positive' Class : 1               
+                                          
+
+--- Evaluation Metrics (rf_model_worst1) ---
+Precision:  0.7701 
+Recall (Sensitivity):  0.5152 
+F1 Score:  0.6174 
+Kappa:  0.4978 
+
+--- Sample Predictions and Probabilities ---
+   Actual Predicted Probability
+1       0         0        0.15
+2       0         0        0.30
+5       0         0        0.30
+8       0         0        0.30
+10      1         1        0.65
+12      1         1        0.50
+15      0         0        0.35
+17      1         1        0.65
+18      0         0        0.30
+20      1         0        0.45
+
+
+worst to best models2
+rf_model_worst2 <- randomForest(CHURN_LABEL ~ ., 
+                                data = train_rf_data, 
+                                ntree = 20,                   # Very few trees
+                                mtry = 2,                    # Only one feature considered per split (too restrictive)
+                                importance = FALSE,           # No importance tracking
+                                na.action = na.omit)
+
+# --- Predictions ---
+rf_predictions2 <- predict(rf_model_worst2, newdata = X_testRF)
+rf_probabilities2 <- predict(rf_model_worst2, newdata = X_testRF, type = "prob")[, "1"]
+
+# --- Confusion Matrix with Full Stats ---
+library(caret)
+cm2 <- confusionMatrix(rf_predictions2, y_testRF, positive = "1")  
+print(cm2)
+
+# --- Extract and Print Evaluation Metrics ---
+kappa2 <- cm2$overall['Kappa']
+precision2 <- cm2$byClass['Pos Pred Value']
+recall2 <- cm2$byClass['Sensitivity']
+f1_score2 <- 2 * (precision2 * recall2) / (precision2 + recall2)
+
+cat("\n--- Evaluation Metrics (rf_model_worst2) ---\n")
+cat("Precision: ", round(precision2, 4), "\n")
+cat("Recall (Sensitivity): ", round(recall2, 4), "\n")
+cat("F1 Score: ", round(f1_score2, 4), "\n")
+cat("Kappa: ", round(kappa2, 4), "\n")
+
+# --- Show a sample of predictions and probabilities ---
+cat("\n--- Sample Predictions and Probabilities ---\n")
+sample_output2 <- data.frame(
+  Actual = y_testRF[1:10],
+  Predicted = rf_predictions2[1:10],
+  Probability = round(rf_probabilities2[1:10], 4)
+)
+print(sample_output2)
+
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    0    1
+         0 2109  286
+         1    0  605
+                                          
+               Accuracy : 0.9047          
+                 95% CI : (0.8936, 0.9149)
+    No Information Rate : 0.703           
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.7484          
+                                          
+ Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+            Sensitivity : 0.6790          
+            Specificity : 1.0000          
+         Pos Pred Value : 1.0000          
+         Neg Pred Value : 0.8806          
+             Prevalence : 0.2970          
+         Detection Rate : 0.2017          
+   Detection Prevalence : 0.2017          
+      Balanced Accuracy : 0.8395          
+                                          
+       'Positive' Class : 1               
+                                          
+
+--- Evaluation Metrics (rf_model_worst2) ---
+Precision:  1 
+Recall (Sensitivity):  0.679 
+F1 Score:  0.8088 
+
+Kappa:  0.7484 
+
+--- Sample Predictions and Probabilities ---
+   Actual Predicted Probability
+1       0         0        0.00
+2       0         0        0.05
+5       0         0        0.00
+8       0         0        0.05
+10      1         1        0.75
+12      1         0        0.50
+15      0         0        0.05
+17      1         1        0.55
+18      0         0        0.05
+20      1         1        0.90
+
+worst to best models3
+rf_model_worst3 <- randomForest(CHURN_LABEL ~ ., 
+                                data = train_rf_data, 
+                                ntree = 20,                        # Too few trees: weak ensemble
+                                mtry = ncol(X_trainRF_balanced),  # Use all features at each split (less randomness)
+                                importance = FALSE,                # No variable importance tracking
+                                na.action = na.omit)               # Remove NAs safely
+
+# --- Predictions ---
+rf_predictions3 <- predict(rf_model_worst3, newdata = X_testRF)
+rf_probabilities3 <- predict(rf_model_worst3, newdata = X_testRF, type = "prob")[, "1"]
+
+# --- Confusion Matrix with Full Stats ---
+library(caret)
+cm3 <- confusionMatrix(rf_predictions3, y_testRF, positive = "1")  
+print(cm3)
+
+# --- Extract and Print Evaluation Metrics ---
+kappa3 <- cm3$overall['Kappa']
+precision3 <- cm3$byClass['Pos Pred Value']
+recall3 <- cm3$byClass['Sensitivity']
+f1_score3 <- 2 * (precision3 * recall3) / (precision3 + recall3)
+
+cat("\n--- Evaluation Metrics (rf_model_worst3) ---\n")
+cat("Precision: ", round(precision3, 4), "\n")
+cat("Recall (Sensitivity): ", round(recall3, 4), "\n")
+cat("F1 Score: ", round(f1_score3, 4), "\n")
+cat("Kappa: ", round(kappa3, 4), "\n")
+
+# --- Show a sample of predictions and probabilities ---
+cat("\n--- Sample Predictions and Probabilities ---\n")
+sample_output3 <- data.frame(
+  Actual = y_testRF[1:10],
+  Predicted = rf_predictions3[1:10],
+  Probability = round(rf_probabilities3[1:10], 4)
+)
+print(sample_output3)
+
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    0    1
+         0 2092  166
+         1   17  725
+                                          
+               Accuracy : 0.939           
+                 95% CI : (0.9298, 0.9473)
+    No Information Rate : 0.703           
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.8465          
+                                          
+ Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+            Sensitivity : 0.8137          
+            Specificity : 0.9919          
+         Pos Pred Value : 0.9771          
+         Neg Pred Value : 0.9265          
+             Prevalence : 0.2970          
+         Detection Rate : 0.2417          
+   Detection Prevalence : 0.2473          
+      Balanced Accuracy : 0.9028          
+                                          
+       'Positive' Class : 1               
+                                          
+
+--- Evaluation Metrics (rf_model_worst3) ---
+Precision:  0.9771 
+Recall (Sensitivity):  0.8137 
+F1 Score:  0.8879 
+Kappa:  0.8465 
+
+
+--- Sample Predictions and Probabilities ---
+
+   Actual Predicted Probability
+1       0         0           0
+2       0         0           0
+5       0         0           0
+8       0         0           0
+10      1         1           1
+12      1         1           1
+15      0         0           0
+17      1         1           1
+18      0         0           0
+20      1         1           1
+
+
+worst to best models4
+rf_model_worst4 <- randomForest(CHURN_LABEL ~ ., 
+                                data = train_rf_data, 
+                                ntree = 40,                       # Number of trees
+                                mtry = floor(sqrt(ncol(X_trainRF_balanced))), # Features per split
+                                importance = TRUE,                 # Get variable importance
+                                na.action = na.omit)               # Handle NAs
+
+# --- Predictions ---
+rf_predictions4 <- predict(rf_model_worst4, newdata = X_testRF)
+rf_probabilities4 <- predict(rf_model_worst4, newdata = X_testRF, type = "prob")[, "1"]
+
+# --- Confusion Matrix with Full Stats ---
+library(caret)
+cm4 <- confusionMatrix(rf_predictions4, y_testRF, positive = "1")  
+print(cm4)
+
+# --- Extract and Print Evaluation Metrics ---
+kappa4 <- cm4$overall['Kappa']
+precision4 <- cm4$byClass['Pos Pred Value']
+recall4 <- cm4$byClass['Sensitivity']
+f1_score4 <- 2 * (precision4 * recall4) / (precision4 + recall4)
+
+cat("\n--- Evaluation Metrics (rf_model_worst4) ---\n")
+cat("Precision: ", round(precision4, 4), "\n")
+cat("Recall (Sensitivity): ", round(recall4, 4), "\n")
+cat("F1 Score: ", round(f1_score4, 4), "\n")
+cat("Kappa: ", round(kappa4, 4), "\n")
+
+# --- Show a sample of predictions and probabilities ---
+cat("\n--- Sample Predictions and Probabilities ---\n")
+sample_output4 <- data.frame(
+  Actual = y_testRF[1:10],
+  Predicted = rf_predictions4[1:10],
+  Probability = round(rf_probabilities4[1:10], 4)
+)
+print(sample_output4)
+
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    0    1
+         0 2108  168
+         1    1  723
+                                          
+               Accuracy : 0.9437          
+                 95% CI : (0.9348, 0.9516)
+    No Information Rate : 0.703           
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.8574          
+                                          
+ Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+            Sensitivity : 0.8114          
+            Specificity : 0.9995          
+         Pos Pred Value : 0.9986          
+         Neg Pred Value : 0.9262          
+             Prevalence : 0.2970          
+         Detection Rate : 0.2410          
+   Detection Prevalence : 0.2413          
+      Balanced Accuracy : 0.9055          
+                                          
+       'Positive' Class : 1               
+                                          
+--- Evaluation Metrics (rf_model_worst4) ---
+Precision:  0.9986 
+Recall (Sensitivity):  0.8114 
+F1 Score:  0.8954 
+Kappa:  0.8574 
+
+
+--- Sample Predictions and Probabilities ---
+
+   Actual Predicted Probability
+1       0         0       0.000
+2       0         0       0.000
+5       0         0       0.000
+8       0         0       0.000
+10      1         1       0.975
+12      1         1       0.950
+15      0         0       0.050
+17      1         1       1.000
+18      0         0       0.000
+20      1         1       0.950
+
+
+worst to best models5
+rf_model_worst5 <- randomForest(CHURN_LABEL ~ ., 
+                                data = train_rf_data, 
+                                ntree = 20,                       # Number of trees
+                                mtry = floor(sqrt(ncol(X_trainRF_balanced))), # Features per split
+                                importance = TRUE,                 # Get variable importance
+                                na.action = na.omit)               # Handle NAs
+
+# --- Predictions ---
+rf_predictions5 <- predict(rf_model_worst5, newdata = X_testRF)
+rf_probabilities5 <- predict(rf_model_worst5, newdata = X_testRF, type = "prob")[, "1"]
+
+# --- Confusion Matrix with Full Stats ---
+library(caret)
+cm5 <- confusionMatrix(rf_predictions5, y_testRF, positive = "1")  
+print(cm5)
+
+# --- Extract and Print Evaluation Metrics ---
+kappa5 <- cm5$overall['Kappa']
+precision5 <- cm5$byClass['Pos Pred Value']
+recall5 <- cm5$byClass['Sensitivity']
+f1_score5 <- 2 * (precision5 * recall5) / (precision5 + recall5)
+
+cat("\n--- Evaluation Metrics (rf_model_worst5) ---\n")
+cat("Precision: ", round(precision5, 4), "\n")
+cat("Recall (Sensitivity): ", round(recall5, 4), "\n")
+cat("F1 Score: ", round(f1_score5, 4), "\n")
+cat("Kappa: ", round(kappa5, 4), "\n")
+
+# --- Show a sample of predictions and probabilities ---
+cat("\n--- Sample Predictions and Probabilities ---\n")
+sample_output5 <- data.frame(
+  Actual = y_testRF[1:10],
+  Predicted = rf_predictions5[1:10],
+  Probability = round(rf_probabilities5[1:10], 4)
+)
+print(sample_output5)
+
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    0    1
+         0 2108  168
+         1    1  723
+                                          
+               Accuracy : 0.9437          
+                 95% CI : (0.9348, 0.9516)
+    No Information Rate : 0.703           
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.8574          
+                                          
+ Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+            Sensitivity : 0.8114          
+            Specificity : 0.9995          
+         Pos Pred Value : 0.9986          
+         Neg Pred Value : 0.9262          
+             Prevalence : 0.2970          
+         Detection Rate : 0.2410          
+   Detection Prevalence : 0.2413          
+      Balanced Accuracy : 0.9055          
+                                          
+       'Positive' Class : 1               
+                                          
+
+
+--- Evaluation Metrics (rf_model_worst5) ---
+Precision:  0.9986 
+Recall (Sensitivity):  0.8114 
+F1 Score:  0.8954 
+Kappa:  0.8574 
+> 
+
+
+--- Sample Predictions and Probabilities ---
+
+   Actual Predicted Probability
+1       0         0        0.05
+2       0         0        0.00
+5       0         0        0.00
+8       0         0        0.00
+10      1         1        0.85
+12      1         1        0.95
+15      0         0        0.00
+17      1         1        0.95
+18      0         0        0.05
+20      1         1        1.00
+
+worst to best models6
+library(randomForest)
+rf_model_worst6 <- randomForest(CHURN_LABEL ~ ., 
+                                data = train_rf_data, 
+                                ntree = 500,                       # Number of trees
+                                mtry = floor(sqrt(ncol(X_trainRF_balanced))), # Features per split
+                                importance = TRUE,                 # Get variable importance
+                                na.action = na.omit)               # Handle NAs
+
+#metrics
+rf_predictions6 <- predict(rf_model_worst6, newdata = X_testRF)
+rf_probabilities6 <- predict(rf_model_worst6, newdata = X_testRF, type = "prob")[, "1"]
+# --- Confusion Matrix with Full Stats ---
+library(caret)
+cm6 <- confusionMatrix(rf_predictions6, y_testRF, positive = "1")  
+print(cm6)
+
+# --- Extract and Print Evaluation Metrics ---
+kappa6 <- cm6$overall['Kappa']
+precision6 <- cm6$byClass['Pos Pred Value']
+recall6 <- cm6$byClass['Sensitivity']
+f1_score6 <- 2 * (precision6 * recall6) / (precision6 + recall6)
+
+cat("\n--- Evaluation Metrics (rf_model_worst6) ---\n")
+cat("Precision: ", round(precision6, 4), "\n")
+cat("Recall (Sensitivity): ", round(recall6, 4), "\n")
+cat("F1 Score: ", round(f1_score6, 4), "\n")
+cat("Kappa: ", round(kappa6, 4), "\n")
+
+# --- Show a sample of predictions and probabilities ---
+cat("\n--- Sample Predictions and Probabilities ---\n")
+sample_output6 <- data.frame(
+  Actual = y_testRF[1:10],
+  Predicted = rf_predictions6[1:10],
+  Probability = round(rf_probabilities6[1:10], 4)
+)
+print(sample_output6)
+
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    0    1
+         0 2109  168
+         1    0  723
+                                         
+               Accuracy : 0.944          
+                 95% CI : (0.9352, 0.952)
+    No Information Rate : 0.703          
+    P-Value [Acc > NIR] : < 2.2e-16      
+                                         
+                  Kappa : 0.8582         
+                                         
+ Mcnemar's Test P-Value : < 2.2e-16      
+                                         
+            Sensitivity : 0.8114         
+            Specificity : 1.0000         
+         Pos Pred Value : 1.0000         
+         Neg Pred Value : 0.9262         
+             Prevalence : 0.2970         
+         Detection Rate : 0.2410         
+   Detection Prevalence : 0.2410         
+      Balanced Accuracy : 0.9057         
+                                         
+       'Positive' Class : 1              
+                                         
+
+
+--- Evaluation Metrics (rf_model_worst6) ---
+Precision:  1 
+Recall (Sensitivity):  0.8114 
+F1 Score:  0.8959 
+Kappa:  0.8582 
+
+
+--- Sample Predictions and Probabilities ---
+
+   Actual Predicted Probability
+1       0         0       0.010
+2       0         0       0.004
+5       0         0       0.008
+8       0         0       0.010
+10      1         1       0.974
+12      1         1       0.956
+15      0         0       0.050
+17      1         1       0.948
+18      0         0       0.014
+20      1         1       0.988
