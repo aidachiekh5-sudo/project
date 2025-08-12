@@ -1,0 +1,121 @@
+# Apply one-hot encoding to 'COUNTRY' and 'INDUSTRY' in b2b_data4_updated
+b2b_data4_updated <- fastDummies::dummy_cols(
+  b2b_data4_updated,
+  select_columns = c("COUNTRY", "INDUSTRY"),
+  remove_first_dummy = FALSE,
+  remove_selected_columns = FALSE
+)
+
+# Ordinal encoding of PLAN and SEGMENT in b2b_data4_updated
+b2b_data4_updated$PLAN <- as.integer(factor(b2b_data4_updated$PLAN, 
+                                            levels = c("Pro", "Growth", "Enterprise"), 
+                                            ordered = TRUE))
+
+b2b_data4_updated$SEGMENT <- as.integer(factor(b2b_data4_updated$SEGMENT, 
+                                               levels = c("SMB", "Mid-Market", "Enterprise"), 
+                                               ordered = TRUE))
+
+#remove unecessary columns from train and test
+b2b_data4_updated <- b2b_data4_updated[, !(names(b2b_data4_updated) %in% c("CUSTOMER_ID", "CUSTOMER_STATUS", "PREDICTED_CHURN","CHURN_PROBABILITY",'COUNTRY',"INDUSTRY"))]
+
+# Convert CHURN_LABEL to factor
+b2b_data4_updated$CHURN_LABEL <- as.factor(b2b_data4_updated$CHURN_LABEL)
+
+
+
+# Step 2: Split (70% train, 30% test) while preserving class ratio
+library(caTools)
+set.seed(42)
+split <- sample.split(b2b_data4_updated$CHURN_LABEL, SplitRatio = 0.7)
+
+# Step 3: Create train and test sets
+train_data <- subset(b2b_data4_updated, split == TRUE)
+test_data  <- subset(b2b_data4_updated, split == FALSE)
+
+print(prop.table(table(b2b_data4_updated$CHURN_LABEL)))
+print(prop.table(table(train_data$CHURN_LABEL)))
+print(prop.table(table(test_data$CHURN_LABEL)))
+
+# Step 4: Separate features and labels
+X_train <- subset(train_data, select = -CHURN_LABEL)
+y_train<- train_data$CHURN_LABEL
+
+X_test  <- subset(test_data, select = -CHURN_LABEL)
+y_test  <- test_data$CHURN_LABEL
+
+# Convert y_trainDT to numeric vector (required by smotefamily)
+y_train_vec <- as.numeric(as.character(y_train))
+
+# Apply SMOTE (NOTE: convert X_trainDT to data.frame, NOT matrix)
+library(smotefamily)
+smote_output <- SMOTE(data.frame(X_train), y_train_vec, K = 5, dup_size = 2)
+
+# Combine SMOTE result
+X_train_balanced <- smote_output$data[, -ncol(smote_output$data)]
+y_train_balanced <- smote_output$data[,  ncol(smote_output$data)]
+
+prop.table(table(y_train_balanced))
+table(y_train_balanced)
+table(y_train)
+
+#match col names between training and testing set 
+colnames(X_train_balanced) <- gsub("\\.", " ", colnames(X_train_balanced))
+colnames(X_train_balanced) <- gsub("Financial Services Fintech", "Financial Services/Fintech", colnames(X_train_balanced))
+
+setdiff(names(X_test), names(X_train_balanced))
+setdiff(names(X_train_balanced), names(X_test))
+
+#XGBOOST training
+install.packages("xgboost")
+install.packages("caret")
+library(caret)
+library(xgboost)
+
+# Prepare data
+y_train_balanced <- as.factor(y_train_balanced)  # Ensure it's factor for caret
+
+# Combine into one training set
+train_balanced <- cbind(X_train_balanced, CHURN_LABEL = y_train_balanced)
+
+# Train using caret
+xgb_model_caret <- train(
+  CHURN_LABEL ~ .,
+  data = train_balanced,
+  method = "xgbTree",
+  trControl = trainControl(method = "cv", number = 5),
+  tuneLength = 3
+)
+
+
+# --- Predict Classes and Probabilities ---
+predictions <- predict(xgb_model_caret, newdata = X_test)  # class labels
+probabilities <- predict(xgb_model_caret, newdata = X_test, type = "prob")[, "1"]  # probability for class 1
+
+# --- Ensure Factor Format for y_test ---
+y_test <- as.factor(y_test)
+
+# --- Confusion Matrix with Full Stats ---
+cm <- confusionMatrix(predictions, y_test, positive = "1")
+print(cm)
+
+# --- Extract and Print Evaluation Metrics ---
+kappa <- cm$overall['Kappa']
+precision <- cm$byClass['Pos Pred Value']
+recall <- cm$byClass['Sensitivity']
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+cat("\n--- Evaluation Metrics ---\n")
+cat("Precision: ", round(precision, 4), "\n")
+cat("Recall (Sensitivity): ", round(recall, 4), "\n")
+cat("F1 Score: ", round(f1_score, 4), "\n")
+cat("Kappa: ", round(kappa, 4), "\n")
+
+# --- Show a sample of predictions and probabilities ---
+cat("\n--- Sample Predictions and Probabilities ---\n")
+sample_output <- data.frame(
+  Actual = y_test[1:10],
+  Predicted = predictions[1:10],
+  Probability = round(probabilities[1:10], 4)
+)
+print(sample_output)
+
