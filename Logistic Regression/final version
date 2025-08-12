@@ -21,3 +21,5 @@ TO VERSION 2:
           optimal_threshold <- 0.6152687
           predictions <- ifelse(probabilities >= optimal_threshold, 1, 0)
         This should increase precision while keeping recall good.
+
+3- Normalization
