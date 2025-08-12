@@ -1,2 +1,23 @@
 
 For churn prediction, catching as many churners as possible is often worth a few extra false alarms.
+
+
+
+TO VERSION 2:
+1- Use regularization (Ridge/Lasso) to improve generalization
+        glm() doesn’t include regularization.
+        Use glmnet for L1 (Lasso) or L2 (Ridge) regularization — can help prevent overfitting and improve stability.
+        switching from a basic logistic regression to Ridge-regularized logistic regression via glmnet with cross-validated λ is a valid improvement, even if the accuracy bump looks small.
+        That’s because regularization mostly helps with:
+                Reducing overfitting (especially when you have many dummy variables from COUNTRY and INDUSTRY)
+                Stabilizing coefficients so they generalize better to unseen data
+                Handling multicollinearity naturally
+
+2- Use the ROC-derived threshold instead of 0.5
+        You’ve already computed it: 0.6152687
+        Replace:
+          predictions <- ifelse(probabilities >= 0.5, 1, 0)
+        with:
+          optimal_threshold <- 0.6152687
+          predictions <- ifelse(probabilities >= optimal_threshold, 1, 0)
+        This should increase precision while keeping recall good.
