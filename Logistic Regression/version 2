@@ -21,6 +21,41 @@ b2b_data4_updated <- b2b_data4_updated[, !(names(b2b_data4_updated) %in% c("CUST
 # Convert CHURN_LABEL to factor
 b2b_data4_updated$CHURN_LABEL <- as.factor(b2b_data4_updated$CHURN_LABEL)
 
+# Load library
+
+library(caret)
+
+
+# Define columns to normalize
+
+cols_to_normalize <- c("MRR", "SUBSCRIPTION_DURATION", "AVG_MONTHLY_LOGINS", 
+                       
+                       "AVG_TICKETS_RAISED", "AVG_FEATURE_USAGE")
+
+
+# Apply Min-Max normalization
+
+normalization_model <- preProcess(b2b_data4_updated[, cols_to_normalize], method = c("range"))
+
+b2b_data4_updated[, paste0(cols_to_normalize, "_norm")] <- predict(normalization_model, b2b_data4_updated[, cols_to_normalize])
+
+
+# Drop original numeric columns after normalization
+
+b2b_data4_updated <- b2b_data4_updated[, !names(b2b_data4_updated) %in% c(
+  
+  "MRR",
+  
+  "SUBSCRIPTION_DURATION",
+  
+  "AVG_MONTHLY_LOGINS",
+  
+  "AVG_TICKETS_RAISED",
+  
+  "AVG_FEATURE_USAGE"
+  
+)]
+
 # Step 2: Split (70% train, 30% test) while preserving class ratio
 library(caTools)
 set.seed(42)
