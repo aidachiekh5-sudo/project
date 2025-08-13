@@ -1,0 +1,69 @@
+
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    0    1
+         0 2107  168
+         1    2  723
+                                          
+               Accuracy : 0.9433          
+                 95% CI : (0.9345, 0.9513)
+    No Information Rate : 0.703           
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.8566          
+                                          
+ Mcnemar's Test P-Value : < 2.2e-16       
+                                          
+            Sensitivity : 0.8114          
+            Specificity : 0.9991          
+         Pos Pred Value : 0.9972          
+         Neg Pred Value : 0.9262          
+             Prevalence : 0.2970          
+         Detection Rate : 0.2410          
+   Detection Prevalence : 0.2417          
+      Balanced Accuracy : 0.9052          
+                                          
+       'Positive' Class : 1               
+                                          
+> 
+> # --- Extract and Print Evaluation Metrics ---
+> kappa4 <- cm4$overall['Kappa']
+> precision4 <- cm4$byClass['Pos Pred Value']
+> recall4 <- cm4$byClass['Sensitivity']
+> f1_score4 <- 2 * (precision4 * recall4) / (precision4 + recall4)
+> 
+> cat("\n--- Evaluation Metrics (rf_model_worst4) ---\n")
+
+--- Evaluation Metrics (rf_model_worst4) ---
+> cat("Precision: ", round(precision4, 4), "\n")
+Precision:  0.9972 
+> cat("Recall (Sensitivity): ", round(recall4, 4), "\n")
+Recall (Sensitivity):  0.8114 
+> cat("F1 Score: ", round(f1_score4, 4), "\n")
+F1 Score:  0.8948 
+> cat("Kappa: ", round(kappa4, 4), "\n")
+Kappa:  0.8566 
+> 
+> # --- Show a sample of predictions and probabilities ---
+> cat("\n--- Sample Predictions and Probabilities ---\n")
+
+--- Sample Predictions and Probabilities ---
+> sample_output4 <- data.frame(
++   Actual = y_testRF[1:10],
++   Predicted = rf_predictions4[1:10],
++   Probability = round(rf_probabilities4[1:10], 4)
++ )
+> print(sample_output4)
+   Actual Predicted Probability
+1       0         0       0.000
+2       0         0       0.025
+5       0         0       0.000
+8       0         0       0.000
+10      1         1       0.975
+12      1         1       0.950
+15      0         0       0.075
+17      1         1       0.975
+18      0         0       0.000
+20      1         1       0.925
+> 
