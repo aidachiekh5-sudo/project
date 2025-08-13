@@ -1,0 +1,31 @@
+
+# Step 4: Evaluate model on test data
+rf_predictions <- predict(rf_model, newdata = X_testRF)
+rf_probabilities <- predict(rf_model, newdata = X_testRF, type = "prob") # predicted probabilities
+
+# Step 5: Confusion matrix & metrics
+library(caret)
+conf_mat <- confusionMatrix(rf_predictions, y_testRF, positive = "1")
+
+# Print full confusion matrix and statistics
+print(conf_mat)
+
+# Extract metrics
+accuracy  <- conf_mat$overall["Accuracy"]
+precision <- conf_mat$byClass["Precision"]
+recall    <- conf_mat$byClass["Recall"]
+f1        <- conf_mat$byClass["F1"]
+
+cat("\nRandom Forest Performance Metrics\n")
+cat(sprintf("Accuracy:  %.4f\n", accuracy))
+cat(sprintf("Precision: %.4f\n", precision))
+cat(sprintf("Recall:    %.4f\n", recall))
+cat(sprintf("F1 Score:  %.4f\n", f1))
+
+# Step 6: Show sample predictions & churn probabilities
+sample_output <- data.frame(
+  Actual = y_testRF[1:10],
+  Predicted = rf_predictions[1:10],
+  Churn_Probability = round(rf_probabilities[1:10, "1"], 4) # probability of churn class '1'
+)
+print(sample_output)
