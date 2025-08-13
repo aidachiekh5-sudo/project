@@ -1,0 +1,49 @@
+
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    0    1
+         0 2109  168
+         1    0  723
+                                         
+               Accuracy : 0.944          
+                 95% CI : (0.9352, 0.952)
+    No Information Rate : 0.703          
+    P-Value [Acc > NIR] : < 2.2e-16      
+                                         
+                  Kappa : 0.8582         
+                                         
+ Mcnemar's Test P-Value : < 2.2e-16      
+                                         
+            Sensitivity : 0.8114         
+            Specificity : 1.0000         
+         Pos Pred Value : 1.0000         
+         Neg Pred Value : 0.9262         
+             Prevalence : 0.2970         
+         Detection Rate : 0.2410         
+   Detection Prevalence : 0.2410         
+      Balanced Accuracy : 0.9057         
+                                         
+       'Positive' Class : 1              
+                                         
+
+Decision Tree Performance Metrics
+Accuracy:  0.9440
+Precision: 1.0000
+Recall:    0.8114
+F1 Score:  0.8959
+
+Tree depth (maxlevel): 1
+Number of leaves: 4
+
+Actual Predicted Churn_Probability
+1       0         0            0.0420
+2       0         0            0.0420
+3       0         0            0.0420
+4       0         0            0.0420
+5       1         1            1.0000
+6       1         1            1.0000
+7       0         0            0.1686
+8       1         1            1.0000
+9       0         0            0.1686
+10      1         1            1.0000
