@@ -1,0 +1,85 @@
+library(caret)
+library(xgboost)
+library(doParallel)
+
+set.seed(42)
+cl <- makePSOCKcluster(parallel::detectCores() - 1)
+registerDoParallel(cl)
+
+# Define the 3 hyperparameter grids
+
+grid1 <- expand.grid(
+  nrounds = 100,
+  max_depth = 6,
+  eta = 0.1,
+  gamma = 1,
+  colsample_bytree = 1,
+  min_child_weight = 1,
+  subsample = 0.7
+)
+
+grid2 <- expand.grid(
+  nrounds = 150,
+  max_depth = 8,
+  eta = 0.05,
+  gamma = 0.5,
+  colsample_bytree = 0.8,
+  min_child_weight = 3,
+  subsample = 0.8
+)
+
+grid3 <- expand.grid(
+  nrounds = 150,
+  max_depth = 4,
+  eta = 0.01,
+  gamma = 2,
+  colsample_bytree = 0.6,
+  min_child_weight = 5,
+  subsample = 0.6
+)
+
+# Function to train and evaluate
+train_and_evaluate <- function(grid, data_train, data_test, target_col) {
+  model <- train(
+    as.formula(paste(target_col, "~ .")),
+    data = data_train,
+    method = "xgbTree",
+    trControl = trainControl(method = "cv", number = 5, verboseIter = FALSE),
+    tuneGrid = grid,
+    metric = "Accuracy"
+  )
+  
+  preds <- predict(model, newdata = data_test)
+  cm <- confusionMatrix(preds, data_test[[target_col]])
+  
+  list(model = model, accuracy = cm$overall["Accuracy"], confusion_matrix = cm)
+}
+
+# Train & evaluate all three combos
+results1 <- train_and_evaluate(grid1, train_balanced, test_data, "CHURN_LABEL")
+results2 <- train_and_evaluate(grid2, train_balanced, test_data, "CHURN_LABEL")
+results3 <- train_and_evaluate(grid3, train_balanced, test_data, "CHURN_LABEL")
+
+stopCluster(cl)
+
+# Compare results
+cat("Test Set Accuracy for Combo 1:", results1$accuracy, "\n")
+cat("Test Set Accuracy for Combo 2:", results2$accuracy, "\n")
+cat("Test Set Accuracy for Combo 3:", results3$accuracy, "\n")
+
+# Optional: print full confusion matrix of best combo
+best_index <- which.max(c(results1$accuracy, results2$accuracy, results3$accuracy))
+best_result <- list(results1, results2, results3)[[best_index]]
+
+cat("\nBest Combo Confusion Matrix:\n")
+print(best_result$confusion_matrix)
+
+# Print full confusion matrix (with stats) for each model
+cat("\n=== Confusion Matrix and Stats for Combo 1 ===\n")
+print(results1$confusion_matrix)
+
+cat("\n=== Confusion Matrix and Stats for Combo 2 ===\n")
+print(results2$confusion_matrix)
+
+cat("\n=== Confusion Matrix and Stats for Combo 3 ===\n")
+print(results3$confusion_matrix)
